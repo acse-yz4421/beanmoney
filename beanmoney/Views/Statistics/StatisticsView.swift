@@ -10,7 +10,6 @@ import SwiftData
 
 struct StatisticsView: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var dataManager = DataManager()
     @State private var selectedPeriod: TimePeriod = .month
     @State private var selectedTab: StatisticsTab = .income
     @State private var showingCustomDateRange = false
@@ -57,7 +56,6 @@ struct StatisticsView: View {
 /// 统计卡片
 struct StatisticsCards: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var dataManager = DataManager()
     let period: StatisticsView.TimePeriod
     @Binding var selectedTab: StatisticsView.StatisticsTab
 
@@ -83,7 +81,7 @@ struct StatisticsCards: View {
     }
 
     private var transactions: [Transaction] {
-        dataManager.getTransactions(from: dateRange.start, to: dateRange.end)
+        DataManager.shared.getTransactions(from: dateRange.start, to: dateRange.end)
     }
 
     /// 按账户分组的统计数据
@@ -112,7 +110,7 @@ struct StatisticsCards: View {
         // 转换为统计数组
         return grouped.map { (accountId, transactions) in
             let totalAmount = transactions.reduce(0) { $0 + $1.amount }
-            let account = dataManager.getAccount(byId: accountId)
+            let account = DataManager.shared.getAccount(byId: accountId)
             return AccountGroupStatistic(
                 account: account,
                 totalAmount: totalAmount,
@@ -359,10 +357,9 @@ struct TrendChart: View {
         }
 
         // 转换为统计数组
-        let dataManager = DataManager()
         return grouped.map { (accountId, transactions) in
             let totalAmount = transactions.reduce(0) { $0 + $1.amount }
-            let account = dataManager.getAccount(byId: accountId)
+            let account = DataManager.shared.getAccount(byId: accountId)
             return AccountGroupStatistic(
                 account: account,
                 totalAmount: totalAmount,
@@ -706,7 +703,6 @@ struct StatisticsSwitcherButton: View {
 /// 统计概览卡片
 struct StatisticsOverviewCard: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var dataManager = DataManager()
     @Binding var selectedPeriod: StatisticsView.TimePeriod
     @Binding var selectedTab: StatisticsView.StatisticsTab
     @State private var showingCustomDateRange = false
@@ -733,7 +729,7 @@ struct StatisticsOverviewCard: View {
     }
 
     private var transactions: [Transaction] {
-        dataManager.getTransactions(from: dateRange.start, to: dateRange.end)
+        DataManager.shared.getTransactions(from: dateRange.start, to: dateRange.end)
     }
 
     private var totalIncome: Decimal {

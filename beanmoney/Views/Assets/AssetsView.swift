@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import Charts
+import UniformTypeIdentifiers
 
 struct AssetsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -15,6 +16,7 @@ struct AssetsView: View {
     @State private var selectedTab: AssetTab = .asset
     @State private var selectedTimeRange: TimeRange = .month
     @State private var titleColorHex: String = AppSettings.shared.titleColorHex
+    @State private var showingAddAccount = false
 
     enum AssetTab: String, CaseIterable {
         case asset = "总资产"
@@ -31,9 +33,8 @@ struct AssetsView: View {
     private var pastTransactions: [Transaction] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        let dataManager = DataManager()
 
-        return dataManager.getAllTransactions().filter { transaction in
+        return DataManager.shared.getAllTransactions().filter { transaction in
             let transactionDay = calendar.startOfDay(for: transaction.createdAt)
             return transactionDay <= today
         }
@@ -153,6 +154,19 @@ struct AssetsView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("资产")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: {
+                        showingAddAccount = true
+                    }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 20, weight: .medium))
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddAccount) {
+                UnifiedAddAccountView()
+            }
             .onAppear {
                 titleColorHex = AppSettings.shared.titleColorHex
             }
@@ -177,14 +191,13 @@ struct AssetOverviewCard: View {
     let totalAssets: Decimal
     let totalLiabilities: Decimal
     @State private var titleColorHex: String = AppSettings.shared.titleColorHex
-    @State private var dataManager = DataManager()
 
     /// 未来交易（今天之后的交易）
     private var futureTransactions: [Transaction] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
 
-        return dataManager.getAllTransactions().filter { transaction in
+        return DataManager.shared.getAllTransactions().filter { transaction in
             let transactionDay = calendar.startOfDay(for: transaction.createdAt)
             return transactionDay > today
         }
@@ -205,14 +218,14 @@ struct AssetOverviewCard: View {
             var change = total
 
             // 检查来源账户
-            if let fromAccount = dataManager.getAccount(byId: transaction.fromAccountId) {
+            if let fromAccount = DataManager.shared.getAccount(byId: transaction.fromAccountId) {
                 if fromAccount.type == .asset {
                     change -= transaction.amount
                 }
             }
 
             // 检查去向账户
-            if let toAccount = dataManager.getAccount(byId: transaction.toAccountId) {
+            if let toAccount = DataManager.shared.getAccount(byId: transaction.toAccountId) {
                 if toAccount.type == .asset {
                     change += transaction.amount
                 }
@@ -228,7 +241,7 @@ struct AssetOverviewCard: View {
             var change = total
 
             // 检查来源账户
-            if let fromAccount = dataManager.getAccount(byId: transaction.fromAccountId) {
+            if let fromAccount = DataManager.shared.getAccount(byId: transaction.fromAccountId) {
                 if fromAccount.type == .liability {
                     // 负债作为来源：负债减少，余额增加（向正变化）
                     change += transaction.amount
@@ -236,7 +249,7 @@ struct AssetOverviewCard: View {
             }
 
             // 检查去向账户
-            if let toAccount = dataManager.getAccount(byId: transaction.toAccountId) {
+            if let toAccount = DataManager.shared.getAccount(byId: transaction.toAccountId) {
                 if toAccount.type == .liability {
                     // 负债作为去向：负债增加，余额减少（向负变化）
                     change -= transaction.amount
@@ -382,8 +395,6 @@ struct AssetTrendChart: View {
     @Environment(\.modelContext) private var modelContext
     @Binding var selectedTimeRange: AssetsView.TimeRange
 
-    @State private var dataManager = DataManager()
-
     /// 获取趋势数据
     private var trendData: [AssetDataPoint] {
         let calendar = Calendar.current
@@ -402,7 +413,7 @@ struct AssetTrendChart: View {
         var dataPoints: [AssetDataPoint] = []
 
         // 获取所有交易记录
-        let allTransactions = dataManager.getAllTransactions()
+        let allTransactions = DataManager.shared.getAllTransactions()
 
         for i in 0..<numberOfPoints {
             // 计算当前时间点的结束日期
@@ -426,7 +437,7 @@ struct AssetTrendChart: View {
             }
 
             // 计算该时间点的资产
-            let accounts = dataManager.getAllAccounts()
+            let accounts = DataManager.shared.getAllAccounts()
             var netWorth: Decimal = 0
             var totalAssets: Decimal = 0
             var totalLiabilities: Decimal = 0
@@ -826,41 +837,52 @@ struct NetWorthCard: View {
 struct AccountListView: View {
     let accounts: [Account]
     let selectedTab: AssetsView.AssetTab
-    @State private var showingAccountManagement = false
+    @State private var showingCategorySort = false
+    @Query private var categories: [AssetCategory]
 
     /// 按分类分组
-    var groupedAccounts: [(AssetCategory, [Account])] {
+    var groupedAccounts: [AccountGroupItem] {
         // 按分类分组
-        let grouped = Dictionary(grouping: accounts) { account -> AssetCategory in
-            return account.category ?? .current
+        let grouped = Dictionary(grouping: accounts) { account -> AssetCategory? in
+            return account.category
         }
 
-        // 按分类的 rawValue 排序
-        return grouped.sorted { $0.key.rawValue < $1.key.rawValue }
+        // 获取当前账户类型对应的所有分组
+        let accountType = selectedTab == .asset ? AccountType.asset : AccountType.liability
+        let typeCategories = categories.filter { $0.accountType == accountType }
+
+        // 使用排序顺序
+        let savedOrder = AppSettings.shared.categoryOrder
+        let sortedCategories = typeCategories.sorted { cat1, cat2 in
+            let index1 = savedOrder.firstIndex(of: cat1.name) ?? Int.max
+            let index2 = savedOrder.firstIndex(of: cat2.name) ?? Int.max
+            return index1 < index2
+        }
+
+        // 按排序顺序返回已分组的账户
+        var result: [AccountGroupItem] = sortedCategories.compactMap { category in
+            grouped[category].map { accounts in
+                AccountGroupItem(id: category.id, category: category, accounts: accounts)
+            }
+        }
+
+        // 添加未分类账户(如果有)
+        if let uncategorizedAccounts = grouped[nil], !uncategorizedAccounts.isEmpty {
+            result.append(AccountGroupItem(id: UUID(), category: nil, accounts: uncategorizedAccounts))
+        }
+
+        return result
     }
+
+/// 账户分组项
+struct AccountGroupItem: Identifiable {
+    let id: UUID
+    let category: AssetCategory?
+    let accounts: [Account]
+}
 
     var body: some View {
         VStack(spacing: 16) {
-            // 管理按钮
-            HStack {
-                Spacer()
-                Button(action: {
-                    showingAccountManagement = true
-                }) {
-                    HStack {
-                        Image(systemName: "gear")
-                            .font(.caption)
-                        Text("账户管理")
-                            .font(.subheadline)
-                    }
-                    .foregroundColor(.blue)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(8)
-                }
-            }
-
             if accounts.isEmpty {
                 // 空状态
                 VStack(spacing: 12) {
@@ -870,34 +892,464 @@ struct AccountListView: View {
                     Text("暂无账户")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                    Text("点击左上角 + 添加账户")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 60)
             } else {
-                // 账户列表（按分类分组）
-                VStack(spacing: 12) {
-                    ForEach(groupedAccounts, id: \.0) { category, accountsInCategory in
-                        AccountCategorySection(
-                            category: category,
-                            accounts: accountsInCategory,
-                            selectedTab: selectedTab
+                // 账户卡片（包含标题和分组）
+                VStack(spacing: 0) {
+                    // 卡片标题
+                    HStack {
+                        Text(selectedTab == .asset ? "资产账户" : "负债账户")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+
+                        Spacer()
+
+                        // 分组排序按钮
+                        Button(action: {
+                            showingCategorySort = true
+                        }) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(.blue)
+                                .frame(width: 36, height: 36)
+                                .background(Color.blue.opacity(0.1))
+                                .clipShape(Circle())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 12)
+
+                    // 分组分隔线
+                    Divider()
+                        .padding(.leading, 16)
+
+                    // 账户列表（所有分组在一个卡片中）
+                    VStack(spacing: 0) {
+                        ForEach(groupedAccounts, id: \.id) { groupItem in
+                            AccountCategorySection(
+                                category: groupItem.category,
+                                accounts: groupItem.accounts,
+                                selectedTab: selectedTab
+                            )
+
+                            // 分组分隔线（最后一个分组不显示）
+                            if groupItem.id != groupedAccounts.last?.id {
+                                Divider()
+                                    .padding(.leading, 16)
+                            }
+                        }
+                    }
+                }
+                .background(Color(uiColor: .white))
+                .cornerRadius(12)
+                .shadow(color: Color(uiColor: .black).opacity(0.05), radius: 3, x: 0, y: 1)
+            }
+        }
+        .sheet(isPresented: $showingCategorySort) {
+            CategorySortView(
+                accountType: selectedTab == .asset ? .asset : .liability
+            )
+        }
+    }
+}
+
+/// 统一添加账户视图
+struct UnifiedAddAccountView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedType: AccountType = .asset
+    @State private var selectedCategory: AssetCategory?
+    @State private var accountName = ""
+    @State private var currencyCode = "CNY"
+    @State private var icon = "folder"
+    @State private var initialBalance = ""
+    @State private var note = ""
+    @State private var showingIconPicker = false
+    @State private var isSaving = false
+
+    @Query private var categories: [AssetCategory]
+    private let currencies = Currency.defaultCurrencies
+
+    var availableCategories: [AssetCategory] {
+        categories.filter { $0.accountType == selectedType }
+            .sorted { $0.orderIndex < $1.orderIndex }
+    }
+
+    var isValid: Bool {
+        !accountName.isEmpty && selectedCategory != nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                // 账户类型
+                Section("账户类型") {
+                    Picker("类型", selection: $selectedType) {
+                        ForEach(AccountType.allCases, id: \.self) { type in
+                            Text(type.description).tag(type)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: selectedType) { _, _ in
+                        // 切换账户类型时，重置分组为该类型的第一个分组
+                        selectedCategory = availableCategories.first
+                    }
+                }
+
+                // 分组类型
+                Section("分组类型") {
+                    Picker("分组", selection: $selectedCategory) {
+                        ForEach(availableCategories) { category in
+                            Text(category.name).tag(category as AssetCategory?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .onAppear {
+                        if selectedCategory == nil {
+                            selectedCategory = availableCategories.first
+                        }
+                    }
+                }
+
+                // 账户信息
+                Section("账户信息") {
+                    TextField("账户名称", text: $accountName)
+
+                    HStack {
+                        Text("币种")
+                            .frame(width: 80, alignment: .leading)
+                        Picker("", selection: $currencyCode) {
+                            ForEach(currencies) { currency in
+                                Text("\(currency.symbol) \(currency.code)").tag(currency.code)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+                    TextField("初始余额", text: $initialBalance)
+                        .keyboardType(.decimalPad)
+                }
+
+                // 图标
+                Section("图标") {
+                    Button(action: {
+                        showingIconPicker = true
+                    }) {
+                        HStack {
+                            Image(systemName: icon)
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                                .frame(width: 40)
+                            Text("选择图标")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                }
+
+                // 备注
+                Section("备注") {
+                    TextField("选填", text: $note, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+            }
+            .navigationTitle("添加账户")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "保存中..." : "保存") {
+                        saveAccount()
+                    }
+                    .disabled(!isValid || isSaving)
+                }
+            }
+            .disabled(isSaving)
+            .sheet(isPresented: $showingIconPicker) {
+                IconPicker(selectedIcon: $icon)
+            }
+        }
+    }
+
+    private func saveAccount() {
+        guard let category = selectedCategory else { return }
+
+        isSaving = true
+
+        do {
+            // 获取当前分类下的最大orderIndex
+            let descriptor = FetchDescriptor<Account>()
+            let existingAccounts = (try? modelContext.fetch(descriptor)) ?? []
+            let categoryAccounts = existingAccounts.filter {
+                $0.category?.id == category.id
+            }
+            let maxOrderIndex = categoryAccounts.map { $0.orderIndex }.max() ?? -1
+
+            let initialBalanceValue = Decimal(string: initialBalance) ?? 0
+
+            let account = Account(
+                name: accountName,
+                type: selectedType,
+                category: category,
+                balance: initialBalanceValue,
+                initialBalance: initialBalanceValue,
+                currencyCode: currencyCode,
+                icon: icon,
+                note: note,
+                orderIndex: maxOrderIndex + 1
+            )
+
+            modelContext.insert(account)
+            try modelContext.save()
+
+            // 保存成功，关闭视图
+            dismiss()
+        } catch {
+            isSaving = false
+            print("Error: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// 快速添加账户视图
+struct QuickAddAccountView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    let accountType: AccountType
+
+    @State private var name = ""
+    @State private var initialBalance = ""
+    @State private var currencyCode = "CNY"
+    @State private var icon = "folder"
+    @State private var note = ""
+    @State private var selectedCategory: AssetCategory?
+    @State private var showingIconPicker = false
+    @State private var isSaving = false
+
+    @Query private var categories: [AssetCategory]
+    private let currencies = Currency.defaultCurrencies
+
+    var availableCategories: [AssetCategory] {
+        categories.filter { $0.accountType == accountType }
+            .sorted { $0.orderIndex < $1.orderIndex }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("账户信息") {
+                    TextField("账户名称", text: $name)
+
+                    Picker("分类", selection: $selectedCategory) {
+                        Text("请选择").tag(nil as AssetCategory?)
+                        ForEach(availableCategories) { category in
+                            Text(category.name).tag(category as AssetCategory?)
+                        }
+                    }
+
+                    Picker("币种", selection: $currencyCode) {
+                        ForEach(currencies, id: \.code) { currency in
+                            Text("\(currency.symbol) \(currency.code)").tag(currency.code)
+                        }
+                    }
+
+                    TextField("初始余额", text: $initialBalance)
+                        .keyboardType(.decimalPad)
+                }
+
+                Section("图标") {
+                    Button(action: {
+                        showingIconPicker = true
+                    }) {
+                        HStack {
+                            Image(systemName: icon)
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                                .frame(width: 40)
+                            Text("选择图标")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                }
+
+                Section("备注") {
+                    TextField("选填", text: $note, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+            }
+            .navigationTitle("添加账户")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "保存中..." : "保存") {
+                        saveAccount()
+                    }
+                    .disabled(!isValid || isSaving)
+                }
+            }
+            .disabled(isSaving)
+            .sheet(isPresented: $showingIconPicker) {
+                IconPicker(selectedIcon: $icon)
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        !name.isEmpty && selectedCategory != nil
+    }
+
+    private func saveAccount() {
+        guard let category = selectedCategory,
+              let initialBalanceValue = Decimal(string: initialBalance) else {
+            return
+        }
+
+        isSaving = true
+
+        // 获取同类账户的最大 orderIndex
+        do {
+            let typeRawValue = accountType.rawValue
+            let descriptor = FetchDescriptor<Account>(
+                predicate: #Predicate<Account> { account in
+                    account.typeRawValue == typeRawValue
+                }
+            )
+            let sameTypeAccounts = try modelContext.fetch(descriptor)
+            let maxOrderIndex = sameTypeAccounts.map { $0.orderIndex }.max() ?? -1
+
+            let account = Account(
+                name: name,
+                type: accountType,
+                category: category,
+                balance: initialBalanceValue,
+                initialBalance: initialBalanceValue,
+                currencyCode: currencyCode,
+                icon: icon,
+                note: note,
+                orderIndex: maxOrderIndex + 1
+            )
+
+            modelContext.insert(account)
+            try modelContext.save()
+
+            // 保存成功，关闭视图
+            dismiss()
+        } catch {
+            isSaving = false
+            print("Error: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// 图标选择器
+struct IconPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedIcon: String
+
+    private let icons = [
+        "folder", "banknote", "creditcard", "house", "car",
+        "laptopcomputer", "gamecontroller", "airplane", "gift.fill",
+        "heart.fill", "star.fill", "book.fill", "bag.fill",
+        "cart.fill", "phone.fill", "tv.fill", "desktopcomputer",
+        "bicycle", "tram.fill", "chart.bar.fill",
+        "chart.line.uptrend.xyaxis", "chart.pie.fill"
+    ]
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 70, maximum: 120), spacing: 12)
+    ]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(icons, id: \.self) { iconName in
+                        IconPickerButton(
+                            iconName: iconName,
+                            isSelected: selectedIcon == iconName,
+                            action: {
+                                selectedIcon = iconName
+                                dismiss()
+                            }
                         )
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("选择图标")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
                     }
                 }
             }
         }
-        .sheet(isPresented: $showingAccountManagement) {
-            CompleteAccountManagementView()
+    }
+}
+
+/// 图标按钮组件
+struct IconPickerButton: View {
+    let iconName: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: iconName)
+                .font(.title2)
+                .foregroundColor(isSelected ? .white : .blue)
+                .frame(width: 60, height: 60)
+                .background(isSelected ? Color.blue : Color.blue.opacity(0.1))
+                .cornerRadius(12)
         }
     }
 }
 
 /// 账户分类区块
 struct AccountCategorySection: View {
-    let category: AssetCategory
+    let category: AssetCategory?
     let accounts: [Account]
     let selectedTab: AssetsView.AssetTab
     @State private var isExpanded = true
+    @State private var accountsList: [Account]
+
+    init(category: AssetCategory?, accounts: [Account], selectedTab: AssetsView.AssetTab) {
+        self.category = category
+        self.accounts = accounts
+        self.selectedTab = selectedTab
+        self._accountsList = State(initialValue: accounts.sorted { $0.orderIndex < $1.orderIndex })
+    }
+
+    /// 分类名称
+    private var categoryName: String {
+        category?.name ?? "未分类"
+    }
 
     private var categoryBalance: Decimal {
         accounts.reduce(0) { total, account in
@@ -927,7 +1379,7 @@ struct AccountCategorySection: View {
                         .frame(width: 16)
 
                     // 分类名称
-                    Text(category.description)
+                    Text("\(categoryName)(\(accounts.count))")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
@@ -953,21 +1405,33 @@ struct AccountCategorySection: View {
 
             // 账户列表（根据展开状态显示）
             if isExpanded {
-                VStack(spacing: 0) {
-                    ForEach(Array(accounts.enumerated()), id: \.element.id) { accountIndex, account in
+                List {
+                    ForEach(accountsList) { account in
                         AccountCard(account: account)
-                        if accountIndex < accounts.count - 1 {
-                            Divider()
-                                .padding(.leading, 16)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color(uiColor: .white))
+                    }
+                    .onMove { source, destination in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            accountsList.move(fromOffsets: source, toOffset: destination)
+                            updateOrderIndices()
                         }
                     }
                 }
+                .listStyle(.plain)
+                .frame(height: CGFloat(accountsList.count) * 72) // 固定高度防止滚动冲突
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(Color(uiColor: .white))
-        .cornerRadius(12)
-        .shadow(color: Color(uiColor: .black).opacity(0.05), radius: 3, x: 0, y: 1)
+        .padding(.vertical, 4) // 给顶部和底部留一点空间
+    }
+
+    private func updateOrderIndices() {
+        for (index, account) in accountsList.enumerated() {
+            account.orderIndex = index
+        }
+        try? accounts.first?.modelContext?.save()
     }
 
     private func formatAmount(_ amount: Decimal) -> String {
@@ -984,6 +1448,10 @@ struct AccountCategorySection: View {
 struct AccountCard: View {
     let account: Account
     @State private var showingDetail = false
+
+    init(account: Account) {
+        self.account = account
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -1048,63 +1516,6 @@ struct AccountCard: View {
     }
 }
 
-/// 账户管理选择视图
-struct AccountManagementSelectionView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedCategory: AssetCategory?
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(AssetCategory.allCases, id: \.self) { category in
-                    Button(action: {
-                        selectedCategory = category
-                    }) {
-                        HStack {
-                            Image(systemName: category.icon)
-                                .foregroundColor(.blue)
-                                .frame(width: 30)
-
-                            Text(category.description)
-                                .foregroundColor(.primary)
-
-                            Spacer()
-
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.secondary)
-                                .font(.caption)
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-            .navigationTitle("管理账户")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
-            }
-            .sheet(item: Binding(
-                get: {
-                    guard let category = selectedCategory else { return nil }
-                    return CategoryWrapper(category: category)
-                },
-                set: { wrapper in selectedCategory = wrapper?.category }
-            )) { (wrapper: CategoryWrapper) in
-                CompleteAccountManagementView()
-            }
-        }
-    }
-}
-
-struct CategoryWrapper: Identifiable {
-    let id = UUID()
-    let category: AssetCategory
-}
-
 /// 账户详情视图
 struct AccountDetailView: View {
     @Environment(\.modelContext) private var modelContext
@@ -1113,8 +1524,12 @@ struct AccountDetailView: View {
     let account: Account
     @State private var selectedTimeFilter: TimeFilter = .all
     @State private var titleColorHex: String = AppSettings.shared.titleColorHex
+    @State private var showingDeleteAlert = false
+    @State private var showingEditAccount = false
 
     @Query private var transactions: [Transaction]
+
+    private let dataManager = DataManager.shared
 
     enum TimeFilter: String, CaseIterable {
         case all = "全部"
@@ -1184,6 +1599,29 @@ struct AccountDetailView: View {
                         dismiss()
                     }
                 }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(action: {
+                        showingDeleteAlert = true
+                    }) {
+                        Text("删除账户")
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            .alert("删除账户", isPresented: $showingDeleteAlert) {
+                Button("取消", role: .cancel) { }
+                Button("删除", role: .destructive) {
+                    deleteAccount()
+                    dismiss()
+                }
+            } message: {
+                let transactionCount = dataManager.getTransactions(for: account).count
+                if transactionCount > 0 {
+                    Text("该账户有 \(transactionCount) 笔交易，删除账户将同时删除这些交易，此操作不可恢复。\n\n确定要删除账户「\(account.name)」吗？")
+                } else {
+                    Text("确定要删除账户「\(account.name)」吗？删除后无法恢复。")
+                }
             }
             .onAppear {
                 titleColorHex = AppSettings.shared.titleColorHex
@@ -1191,6 +1629,9 @@ struct AccountDetailView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TitleColorDidChange"))) { _ in
                 titleColorHex = AppSettings.shared.titleColorHex
             }
+        }
+        .sheet(isPresented: $showingEditAccount) {
+            EditAccountForm(account: account)
         }
         .overlay(alignment: .top) {
             headerCard
@@ -1201,7 +1642,7 @@ struct AccountDetailView: View {
     var headerCard: some View {
         VStack(spacing: 0) {
             // 账户名称和余额
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(account.name)
                         .font(.system(size: 28, weight: .bold))
@@ -1213,6 +1654,33 @@ struct AccountDetailView: View {
                 }
 
                 Spacer()
+
+                // 操作按钮组
+                HStack(spacing: 8) {
+                    // 编辑按钮
+                    Button(action: {
+                        showingEditAccount = true
+                    }) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color.white.opacity(0.2))
+                            .clipShape(Circle())
+                    }
+
+                    // 删除按钮
+                    Button(action: {
+                        showingDeleteAlert = true
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color.red.opacity(0.3))
+                            .clipShape(Circle())
+                    }
+                }
 
                 if !account.note.isEmpty {
                     Text(account.note)
@@ -1311,6 +1779,10 @@ struct AccountDetailView: View {
             ?? Currency(code: account.currencyCode, symbol: "?", name: account.currencyCode)
         return currency.format(amount)
     }
+
+    private func deleteAccount() {
+        dataManager.deleteAccountWithTransactions(account)
+    }
 }
 
 /// 账户统计数据
@@ -1395,9 +1867,12 @@ struct AssetDistributionChart: View {
 
     /// 分类数据（包含该分类下的所有账户）
     private var categoryData: [CategoryDistribution] {
+        // 只处理有分类的账户
+        let accountsWithCategories = accounts.filter { $0.category != nil }
+
         // 按分类分组
-        let grouped = Dictionary(grouping: accounts) { account -> AssetCategory in
-            account.category ?? .current
+        let grouped = Dictionary(grouping: accountsWithCategories) { account -> AssetCategory in
+            account.category!
         }
 
         return grouped.map { (category, accountsInCategory) in
@@ -1438,18 +1913,47 @@ struct AssetDistributionChart: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
 
-            if accounts.isEmpty {
+            if categoryData.isEmpty {
                 // 空状态
-                VStack(spacing: 12) {
-                    Image(systemName: "chart.pie.slice")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary.opacity(0.5))
-                    Text("暂无\(selectedTab == .asset ? "资产" : "负债")数据")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                VStack(spacing: 16) {
+                    // 图标
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.blue.opacity(0.1), Color.blue.opacity(0.05)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 80, height: 80)
+
+                        Image(systemName: selectedTab == .asset ? "folder.badge.questionmark" : "creditcard.trianglebadge.exclamationmark")
+                            .font(.system(size: 32))
+                            .foregroundColor(.blue)
+                    }
+
+                    // 文字说明
+                    VStack(spacing: 8) {
+                        Text("暂无\(selectedTab == .asset ? "资产" : "负债")分布")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+
+                        Text(selectedTab == .asset ? "添加资产账户并设置分组后，这里将显示您的资产分布情况" : "添加负债账户并设置分组后，这里将显示您的负债分布情况")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+                .padding(.vertical, 48)
+                .padding(.horizontal, 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                )
+                .padding(.horizontal, 16)
             } else {
                 // 环形图和图例（左右排列）
                 HStack(spacing: 20) {
@@ -1564,96 +2068,41 @@ struct CategoryLegendRow: View {
     let color: Color
     let overallTotal: Decimal // 总金额用于计算百分比
 
-    @State private var isExpanded = false
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // 一级分类行（可点击展开）
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
+        HStack(spacing: 8) {
+            // 色块
+            Rectangle()
+                .fill(color)
+                .frame(width: 4, height: 40)
+                .cornerRadius(2)
+
+            // 分类信息
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(category.name)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+
+                    Spacer()
+
+                    // 金额
+                    Text(formatAmount(categoryAmount))
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+
+                    // 百分比
+                    let percentage = overallTotal > 0 ? (categoryAmount / overallTotal * 100) : 0
+                    Text(String(format: "%.1f%%", Double(truncating: percentage as NSNumber)))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-            }) {
-                HStack(spacing: 8) {
-                    // 色块
-                    Rectangle()
-                        .fill(color)
-                        .frame(width: 4, height: 40)
-                        .cornerRadius(2)
 
-                    // 分类信息
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(category.description)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-
-                            Spacer()
-
-                            // 金额
-                            Text(formatAmount(categoryAmount))
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-
-                            // 百分比
-                            let percentage = overallTotal > 0 ? (categoryAmount / overallTotal * 100) : 0
-                            Text(String(format: "%.1f%%", Double(truncating: percentage as NSNumber)))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            // 展开/折叠箭头
-                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-
-                        // 账户数量
-                        Text("\(accounts.count) 个账户")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            // 展开的二级分类（账户列表）
-            if isExpanded {
-                VStack(spacing: 6) {
-                    ForEach(accounts) { account in
-                        HStack(spacing: 8) {
-                            // 缩进
-                            Spacer()
-                                .frame(width: 8)
-
-                            // 小色点
-                            Circle()
-                                .fill(color.opacity(0.6))
-                                .frame(width: 6, height: 6)
-
-                            // 账户信息
-                            Text(account.name)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            Spacer()
-
-                            // 金额
-                            Text(formatAccountAmount(account.balance))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            // 百分比
-                            let accountPercentage = categoryAmount > 0 ? (account.balance / categoryAmount * 100) : 0
-                            Text(String(format: "%.1f%%", Double(truncating: accountPercentage as NSNumber)))
-                                .font(.caption2)
-                                .foregroundColor(.secondary.opacity(0.7))
-                        }
-                    }
-                }
-                .padding(.leading, 12)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                // 账户数量
+                Text("\(accounts.count) 个账户")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -1672,7 +2121,266 @@ struct CategoryLegendRow: View {
         formatter.numberStyle = .currency
         formatter.currencyCode = "CNY"
         formatter.currencySymbol = "¥"
+        formatter.maximumFractionDigits = 0
         return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0"
+    }
+}
+
+/// 分组排序视图
+struct CategorySortView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    let accountType: AccountType
+
+    @Query private var categories: [AssetCategory]
+    @Query private var accounts: [Account]
+
+    @State private var showingAddCategory = false
+    @State private var editingCategory: AssetCategory?
+    @State private var categoryToDelete: AssetCategory?
+    @State private var showingDeleteAlert = false
+
+    var filteredCategories: [AssetCategory] {
+        categories.filter { $0.accountType == accountType }
+            .sorted { $0.orderIndex < $1.orderIndex }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("拖动调整分组显示顺序，点击编辑，左滑删除")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Section {
+                    ForEach(filteredCategories) { category in
+                        HStack {
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundColor(.secondary)
+                                .frame(width: 20)
+
+                            Text(category.name)
+                                .font(.subheadline)
+
+                            Spacer()
+
+                            Text("\(getAccountCount(for: category))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            editingCategory = category
+                        }
+                    }
+                    .onDelete { indexSet in
+                        if let index = indexSet.first {
+                            categoryToDelete = filteredCategories[index]
+                            showingDeleteAlert = true
+                        }
+                    }
+                    .onMove { source, destination in
+                        withAnimation {
+                            var reordered = filteredCategories
+                            reordered.move(fromOffsets: source, toOffset: destination)
+                            updateOrderIndices(reordered)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("分组排序")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: {
+                        showingAddCategory = true
+                    }) {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddCategory) {
+                AddCategoryView(accountType: accountType)
+            }
+            .sheet(item: $editingCategory) { category in
+                EditCategoryView(category: category)
+            }
+            .alert("删除分组", isPresented: $showingDeleteAlert) {
+                Button("取消", role: .cancel) {
+                    categoryToDelete = nil
+                }
+                Button("删除", role: .destructive) {
+                    deleteCategory()
+                }
+            } message: {
+                if let category = categoryToDelete {
+                    let accountCount = getAccountCount(for: category)
+                    Text("确定要删除分组「\(category.name)」吗？该分组下有 \(accountCount) 个账户，删除分组后这些账户将变为未分类状态。")
+                }
+            }
+            .onDisappear {
+                // 保存排序顺序
+                AppSettings.shared.saveCategoryOrder(filteredCategories)
+            }
+        }
+    }
+
+    private func getAccountCount(for category: AssetCategory) -> Int {
+        accounts.filter { $0.category?.id == category.id }.count
+    }
+
+    private func updateOrderIndices(_ reordered: [AssetCategory]) {
+        for (index, category) in reordered.enumerated() {
+            category.orderIndex = index
+        }
+
+        try? modelContext.save()
+    }
+
+    private func deleteCategory() {
+        guard let category = categoryToDelete else { return }
+
+        // 将该分类下的所有账户的分类设置为nil
+        let accountsInCategory = accounts.filter { $0.category?.id == category.id }
+        for account in accountsInCategory {
+            account.category = nil
+        }
+
+        // 删除分类
+        modelContext.delete(category)
+        try? modelContext.save()
+
+        categoryToDelete = nil
+    }
+}
+
+/// 添加分组视图
+struct AddCategoryView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    let accountType: AccountType
+
+    @State private var categoryName = ""
+    @State private var isSaving = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("分组信息") {
+                    TextField("分组名称", text: $categoryName)
+                        .autocapitalization(.none)
+                }
+            }
+            .navigationTitle("添加分组")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "保存中..." : "保存") {
+                        saveCategory()
+                    }
+                    .disabled(categoryName.isEmpty || isSaving)
+                }
+            }
+        }
+    }
+
+    private func saveCategory() {
+        isSaving = true
+
+        do {
+            // 获取当前类型的最大 orderIndex
+            let descriptor = FetchDescriptor<AssetCategory>()
+            let existingCategories = try modelContext.fetch(descriptor)
+            let typeCategories = existingCategories.filter { $0.accountType == accountType }
+            let maxOrderIndex = typeCategories.map { $0.orderIndex }.max() ?? -1
+
+            let category = AssetCategory(
+                name: categoryName,
+                accountType: accountType,
+                orderIndex: maxOrderIndex + 1
+            )
+
+            modelContext.insert(category)
+            try modelContext.save()
+
+            dismiss()
+        } catch {
+            isSaving = false
+            print("Error: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// 编辑分组视图
+struct EditCategoryView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    let category: AssetCategory
+
+    @State private var categoryName: String
+    @State private var isSaving = false
+
+    init(category: AssetCategory) {
+        self.category = category
+        self._categoryName = State(initialValue: category.name)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("分组信息") {
+                    TextField("分组名称", text: $categoryName)
+                        .autocapitalization(.none)
+                }
+            }
+            .navigationTitle("编辑分组")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "保存中..." : "保存") {
+                        saveCategory()
+                    }
+                    .disabled(categoryName.isEmpty || isSaving)
+                }
+            }
+        }
+    }
+
+    private func saveCategory() {
+        isSaving = true
+
+        do {
+            category.name = categoryName
+            try modelContext.save()
+
+            dismiss()
+        } catch {
+            isSaving = false
+            print("Error: \(error.localizedDescription)")
+        }
     }
 }
 

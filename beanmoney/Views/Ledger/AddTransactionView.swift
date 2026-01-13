@@ -284,62 +284,18 @@ struct AccountPickerView: View {
 
         var groups: [AccountGroup] = []
 
-        switch selectedFilterType {
-        case .income:
-            // 收入组（按分类显示）
-            let incomeAccounts = filteredAccounts.filter { $0.type == .income }
-            let incomeCategories = Dictionary(grouping: incomeAccounts) { $0.categoryRawValue ?? "" }
-            for (category, incs) in incomeCategories.sorted(by: { $0.key < $1.key }) {
-                if let assetCategory = AssetCategory(rawValue: category) {
-                    groups.append(AccountGroup(
-                        type: .income,
-                        displayName: assetCategory.description,
-                        accounts: incs.sorted { $0.name < $1.name }
-                    ))
-                }
-            }
+        // 按分类分组（使用category关系）
+        let grouped = Dictionary(grouping: filteredAccounts) { account -> String in
+            account.category?.name ?? "未分类"
+        }
 
-        case .expense:
-            // 支出组（按分类显示）
-            let expenseAccounts = filteredAccounts.filter { $0.type == .expense }
-            let expenseCategories = Dictionary(grouping: expenseAccounts) { $0.categoryRawValue ?? "" }
-            for (category, exps) in expenseCategories.sorted(by: { $0.key < $1.key }) {
-                if let assetCategory = AssetCategory(rawValue: category) {
-                    groups.append(AccountGroup(
-                        type: .expense,
-                        displayName: assetCategory.description,
-                        accounts: exps.sorted { $0.name < $1.name }
-                    ))
-                }
-            }
-
-        case .asset:
-            // 资产组（按分类显示）
-            let assetAccounts = filteredAccounts.filter { $0.type == .asset }
-            let assetCategories = Dictionary(grouping: assetAccounts) { $0.categoryRawValue ?? "" }
-            for (category, cats) in assetCategories.sorted(by: { $0.key < $1.key }) {
-                if let assetCategory = AssetCategory(rawValue: category) {
-                    groups.append(AccountGroup(
-                        type: .asset,
-                        displayName: assetCategory.description,
-                        accounts: cats.sorted { $0.name < $1.name }
-                    ))
-                }
-            }
-
-        case .liability:
-            // 负债组（按分类显示）
-            let liabilityAccounts = filteredAccounts.filter { $0.type == .liability }
-            let liabilityCategories = Dictionary(grouping: liabilityAccounts) { $0.categoryRawValue ?? "" }
-            for (category, lias) in liabilityCategories.sorted(by: { $0.key < $1.key }) {
-                if let assetCategory = AssetCategory(rawValue: category) {
-                    groups.append(AccountGroup(
-                        type: .liability,
-                        displayName: assetCategory.description,
-                        accounts: lias.sorted { $0.name < $1.name }
-                    ))
-                }
-            }
+        // 排序并创建分组
+        for (categoryName, accountsInGroup) in grouped.sorted(by: { $0.key < $1.key }) {
+            groups.append(AccountGroup(
+                type: selectedFilterType,
+                displayName: categoryName,
+                accounts: accountsInGroup.sorted { $0.name < $1.name }
+            ))
         }
 
         return groups

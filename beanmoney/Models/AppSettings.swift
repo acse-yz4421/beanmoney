@@ -49,6 +49,21 @@ class AppSettings {
         Color(hex: titleColorHex)
     }
 
+    /// 账户分组排序顺序（存储分组名称数组）
+    var categoryOrder: [String] {
+        get {
+            UserDefaults.standard.stringArray(forKey: "categoryOrder") ?? []
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "categoryOrder")
+        }
+    }
+
+    /// 保存分组排序顺序
+    func saveCategoryOrder(_ categories: [AssetCategory]) {
+        categoryOrder = categories.map { $0.name }
+    }
+
     /// 获取默认币种对象
     var defaultCurrency: Currency {
         Currency.defaultCurrencies.first { $0.code == defaultCurrencyCode }

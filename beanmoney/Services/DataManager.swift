@@ -12,10 +12,14 @@ import SwiftData
 /// 提供统一的数据访问接口
 @MainActor
 class DataManager {
+    static let shared = DataManager()
+
     private let persistence = Persistence.shared
     private var context: ModelContext {
         persistence.context
     }
+
+    private init() {}
 
     // MARK: - 账户管理
 
@@ -38,7 +42,7 @@ class DataManager {
     func getAccounts(byCategory category: AssetCategory) -> [Account] {
         let allAccounts = getAllAccounts()
         return allAccounts.filter { account in
-            account.categoryRawValue == category.rawValue
+            account.category?.id == category.id
         }
     }
 
@@ -56,7 +60,6 @@ class DataManager {
 
     /// 更新账户
     func updateAccount(_ account: Account) {
-        account.updatedAt = Date()
         try? context.save()
     }
 
@@ -64,6 +67,20 @@ class DataManager {
     func deleteAccount(_ account: Account) {
         context.delete(account)
         try? context.save()
+    }
+
+    /// 删除账户及其所有相关交易（级联删除）
+    func deleteAccountWithTransactions(_ account: Account) {
+        // 1. 查找所有涉及该账户的交易
+        let transactions = getTransactions(for: account)
+
+        // 2. 删除所有交易（会自动回滚账户余额）
+        for transaction in transactions {
+            deleteTransaction(transaction)
+        }
+
+        // 3. 删除账户
+        deleteAccount(account)
     }
 
     // MARK: - 交易管理
@@ -127,6 +144,14 @@ class DataManager {
         case .liability:
             // 负债账户：正数增加，负数减少
             account.updateBalance(amount)
+        }
+    }
+
+    /// 获取账户涉及的所有交易
+    func getTransactions(for account: Account) -> [Transaction] {
+        let allTransactions = getAllTransactions()
+        return allTransactions.filter { transaction in
+            transaction.fromAccountId == account.id || transaction.toAccountId == account.id
         }
     }
 

@@ -12,12 +12,11 @@ struct CompleteAccountManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query private var accounts: [Account]
+    @Query private var categories: [AssetCategory]
 
     @State private var selectedType: AccountTypeFilter = .asset
     @State private var showingAddAccount = false
     @State private var editingAccount: Account?
-    @State private var accountToDelete: Account?
-    @State private var showingDeleteAlert = false
 
     enum AccountTypeFilter: String, CaseIterable {
         case income = "收入"
@@ -40,16 +39,21 @@ struct CompleteAccountManagementView: View {
     }
 
     var groupedAccounts: [(AssetCategory, [Account])] {
-        let grouped = Dictionary(grouping: filteredAccounts) { account in
-            account.category ?? AssetCategory.income
+        // 先过滤出有分类的账户
+        let accountsWithCategories = filteredAccounts.filter { $0.category != nil }
+
+        // 按分类分组
+        let grouped = Dictionary(grouping: accountsWithCategories) { account -> AssetCategory in
+            account.category!
         }
 
+        // 转换为数组并排序
         let mapped = grouped.map { (category, accounts) in
             (category, accounts.sorted { $0.orderIndex < $1.orderIndex })
         }
 
         return mapped.sorted { (first, second) in
-            first.0.rawValue < second.0.rawValue
+            first.0.name < second.0.name
         }
     }
 
@@ -74,10 +78,6 @@ struct CompleteAccountManagementView: View {
                                     account: account,
                                     onEdit: {
                                         editingAccount = account
-                                    },
-                                    onDelete: {
-                                        accountToDelete = account
-                                        showingDeleteAlert = true
                                     }
                                 )
                             }
@@ -111,24 +111,12 @@ struct CompleteAccountManagementView: View {
             .sheet(item: $editingAccount) { account in
                 EditAccountForm(account: account)
             }
-            .alert("删除账户", isPresented: $showingDeleteAlert) {
-                Button("取消", role: .cancel) {
-                    accountToDelete = nil
-                }
-                Button("删除", role: .destructive) {
-                    deleteAccount()
-                }
-            } message: {
-                if let account = accountToDelete {
-                    Text("确定要删除账户\"\(account.name)\"吗？删除后无法恢复。")
-                }
-            }
         }
     }
 
     private func categoryHeader(_ category: AssetCategory) -> some View {
         HStack {
-            Text(category.description)
+            Text(category.name)
                 .font(.headline)
             Image(systemName: "line.3.horizontal")
                 .foregroundColor(.secondary)
@@ -146,23 +134,12 @@ struct CompleteAccountManagementView: View {
 
         try? modelContext.save()
     }
-
-    private func deleteAccount() {
-        guard let account = accountToDelete else { return }
-
-        // 删除账户（包括系统账户）
-        modelContext.delete(account)
-        try? modelContext.save()
-
-        accountToDelete = nil
-    }
 }
 
 /// 完整的账户管理行
 struct CompleteAccountRow: View {
     let account: Account
     var onEdit: () -> Void
-    var onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -199,13 +176,10 @@ struct CompleteAccountRow: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(.primary)
 
-            // 删除按钮
-            Button(action: onDelete) {
-                Image(systemName: "trash")
-                    .font(.system(size: 16))
-                    .foregroundColor(.red)
-                    .frame(width: 32, height: 32)
-            }
+            // 箭头图标
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary)
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
@@ -221,6 +195,8 @@ struct CompleteAddAccountForm: View {
     @Environment(\.dismiss) private var dismiss
 
     let selectedType: CompleteAccountManagementView.AccountTypeFilter
+
+    @Query private var categories: [AssetCategory]
 
     @State private var name = ""
     @State private var icon = "folder"
@@ -241,7 +217,8 @@ struct CompleteAddAccountForm: View {
     ]
 
     var availableCategories: [AssetCategory] {
-        AssetCategory.allCases
+        categories.filter { $0.accountType == selectedType.accountType }
+            .sorted { $0.orderIndex < $1.orderIndex }
     }
 
     var body: some View {
@@ -250,24 +227,14 @@ struct CompleteAddAccountForm: View {
                 // 分类选择
                 Section("账户分类") {
                     Picker("分类", selection: $selectedCategory) {
-                        ForEach(availableCategories, id: \.self) { category in
-                            Text(category.description).tag(category as AssetCategory?)
+                        ForEach(availableCategories) { category in
+                            Text(category.name).tag(category as AssetCategory?)
                         }
                     }
                     .pickerStyle(.menu)
                     .onAppear {
                         if selectedCategory == nil && !availableCategories.isEmpty {
-                            // 根据类型选择默认分类
-                            switch selectedType {
-                            case .income:
-                                selectedCategory = .income
-                            case .expense:
-                                selectedCategory = .expense
-                            case .asset:
-                                selectedCategory = .current
-                            case .liability:
-                                selectedCategory = .credit
-                            }
+                            selectedCategory = availableCategories.first
                         }
                     }
                 }
@@ -354,7 +321,7 @@ struct CompleteAddAccountForm: View {
         let descriptor = FetchDescriptor<Account>()
         let existingAccounts = (try? modelContext.fetch(descriptor)) ?? []
         let categoryAccounts = existingAccounts.filter {
-            $0.categoryRawValue == category.rawValue
+            $0.category?.id == category.id
         }
         let maxOrderIndex = categoryAccounts.map { $0.orderIndex }.max() ?? -1
 

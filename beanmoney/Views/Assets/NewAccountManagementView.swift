@@ -59,9 +59,9 @@ struct NewAccountManagementView: View {
 
         // 简化排序逻辑
         return result.sorted { first, second in
-            let firstValue = first.0?.rawValue ?? ""
-            let secondValue = second.0?.rawValue ?? ""
-            return firstValue < secondValue
+            let firstName = first.0?.name ?? ""
+            let secondName = second.0?.name ?? ""
+            return firstName < secondName
         }
     }
 
@@ -79,7 +79,7 @@ struct NewAccountManagementView: View {
 
                 // 账户列表
                 List {
-                    ForEach(groupedAccounts, id: \.0?.rawValue) { (category, accounts) in
+                    ForEach(groupedAccounts, id: \.0?.id) { (category, accounts) in
                         Section {
                             ForEach(accounts) { account in
                                 NewAccountManagementRow(
@@ -100,7 +100,7 @@ struct NewAccountManagementView: View {
                                 .deleteDisabled(false)
                         } header: {
                             if let category = category {
-                                Text(category.description)
+                                Text(category.name)
                             }
                         }
                     }
@@ -235,6 +235,8 @@ struct NewAddAccountForm: View {
 
     let selectedType: NewAccountManagementView.AccountTypeFilter
 
+    @Query private var categories: [AssetCategory]
+
     @State private var name = ""
     @State private var icon = "folder"
     @State private var note = ""
@@ -254,23 +256,19 @@ struct NewAddAccountForm: View {
     ]
 
     var availableCategories: [AssetCategory] {
-        switch selectedType {
-        case .asset, .liability:
-            return AssetCategory.allCases
-        case .income, .expense:
-            return []
-        }
+        categories.filter { $0.accountType == selectedType.accountType }
+            .sorted { $0.orderIndex < $1.orderIndex }
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 // 分类选择（仅资产/负债显示）
-                if selectedType == .asset || selectedType == .liability {
+                if !availableCategories.isEmpty {
                     Section("账户分类") {
                         Picker("分类", selection: $selectedCategory) {
-                            ForEach(availableCategories, id: \.self) { category in
-                                Text(category.description).tag(category as AssetCategory?)
+                            ForEach(availableCategories) { category in
+                                Text(category.name).tag(category as AssetCategory?)
                             }
                         }
                         .pickerStyle(.menu)
@@ -359,7 +357,7 @@ struct NewAddAccountForm: View {
 
     private var isValidCategory: Bool {
         // 资产和负债必须有分类
-        if (selectedType == .asset || selectedType == .liability) && selectedCategory == nil {
+        if !availableCategories.isEmpty && selectedCategory == nil {
             return false
         }
         return true
@@ -372,7 +370,7 @@ struct NewAddAccountForm: View {
 
         let maxOrderIndex: Int
         if let category = selectedCategory {
-            let categoryAccounts = existingAccounts.filter { $0.categoryRawValue == category.rawValue }
+            let categoryAccounts = existingAccounts.filter { $0.category?.id == category.id }
             maxOrderIndex = categoryAccounts.map { $0.orderIndex }.max() ?? -1
         } else {
             let typeAccounts = existingAccounts.filter { $0.typeRawValue == selectedType.accountType.rawValue }

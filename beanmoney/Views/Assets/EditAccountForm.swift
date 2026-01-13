@@ -15,6 +15,10 @@ struct EditAccountForm: View {
     @Bindable var account: Account
 
     @State private var selectedIconIndex = 0
+    @State private var selectedCategory: AssetCategory?
+    @State private var isSaving = false
+
+    @Query private var categories: [AssetCategory]
 
     private let currencies = Currency.defaultCurrencies
     private let icons = [
@@ -26,9 +30,35 @@ struct EditAccountForm: View {
         "chart.bar.fill", "chart.line.uptrend.xyaxis", "chart.pie.fill"
     ]
 
+    var availableCategories: [AssetCategory] {
+        categories.filter { $0.accountType == account.type }
+            .sorted { $0.orderIndex < $1.orderIndex }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                // 账户类型（不可修改）
+                Section("账户类型") {
+                    HStack {
+                        Text("类型")
+                            .frame(width: 80, alignment: .leading)
+                        Text(account.type.description)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // 分组类型
+                Section("分组类型") {
+                    Picker("分组", selection: $selectedCategory) {
+                        Text("未分类").tag(nil as AssetCategory?)
+                        ForEach(availableCategories) { category in
+                            Text(category.name).tag(category as AssetCategory?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
                 Section("账户信息") {
                     HStack {
                         Text("账户名称")
@@ -65,11 +95,6 @@ struct EditAccountForm: View {
                         }
                     }
                     .padding(.vertical, 8)
-                    .onAppear {
-                        if let index = icons.firstIndex(of: account.icon) {
-                            selectedIconIndex = index
-                        }
-                    }
                 }
 
                 Section("备注") {
@@ -87,13 +112,34 @@ struct EditAccountForm: View {
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        account.updatedAt = Date()
-                        try? modelContext.save()
-                        dismiss()
+                    Button(isSaving ? "保存中..." : "保存") {
+                        saveAccount()
                     }
+                    .disabled(isSaving)
                 }
             }
+            .disabled(isSaving)
+            .onAppear {
+                selectedCategory = account.category
+                if let index = icons.firstIndex(of: account.icon) {
+                    selectedIconIndex = index
+                }
+            }
+        }
+    }
+
+    private func saveAccount() {
+        isSaving = true
+
+        // 更新账户分类
+        account.category = selectedCategory
+
+        do {
+            try modelContext.save()
+            dismiss()
+        } catch {
+            isSaving = false
+            print("Error saving account: \(error.localizedDescription)")
         }
     }
 }

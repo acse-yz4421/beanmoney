@@ -14,15 +14,13 @@ final class Account {
     var id: UUID
     var name: String
     var typeRawValue: String        // AccountType的rawValue
-    var categoryRawValue: String?   // AssetCategory的rawValue（可选）
+    @Relationship var category: AssetCategory?  // 关联分组
     var balance: Decimal            // 当前余额
     var initialBalance: Decimal     // 初始金额
     var currencyCode: String        // 关联Currency的code
     var icon: String
     var note: String
     var orderIndex: Int             // 排序索引
-    var createdAt: Date
-    var updatedAt: Date
 
     init(
         id: UUID = UUID(),
@@ -39,30 +37,19 @@ final class Account {
         self.id = id
         self.name = name
         self.typeRawValue = type.rawValue
-        self.categoryRawValue = category?.rawValue
+        self.category = category
         self.balance = balance
         self.initialBalance = initialBalance
         self.currencyCode = currencyCode
         self.icon = icon
         self.note = note
         self.orderIndex = orderIndex
-        self.createdAt = Date()
-        self.updatedAt = Date()
     }
 
     /// 账户类型
     var type: AccountType {
         get { AccountType(rawValue: typeRawValue) ?? .asset }
         set { typeRawValue = newValue.rawValue }
-    }
-
-    /// 账户分类（仅用于资产/负债类型）
-    var category: AssetCategory? {
-        get {
-            guard let categoryRawValue else { return nil }
-            return AssetCategory(rawValue: categoryRawValue)
-        }
-        set { categoryRawValue = newValue?.rawValue }
     }
 
     /// 格式化后的余额
@@ -99,33 +86,31 @@ final class Account {
     /// 更新余额
     func updateBalance(_ amount: Decimal) {
         balance += amount
-        updatedAt = Date()
     }
 
     /// 设置余额
     func setBalance(_ amount: Decimal) {
         balance = amount
-        updatedAt = Date()
     }
 }
 
 // MARK: - 系统预设账户工厂
 extension Account {
-    /// 创建系统预设账户
+    /// 创建系统预设账户（不关联category，初始化时再关联）
     static func createSystemAccounts() -> [Account] {
         var accounts: [Account] = []
 
         // 收入账户
         let incomeAccounts = [
-            ("工资收入", "banknote", AssetCategory.income),
-            ("投资收益", "chart.line.uptrend.xyaxis", AssetCategory.investmentIncome),
+            ("工资收入", "banknote", "收入"),
+            ("投资收益", "chart.line.uptrend.xyaxis", "投资收益"),
         ]
 
-        for (index, (name, icon, category)) in incomeAccounts.enumerated() {
+        for (index, (name, icon, categoryName)) in incomeAccounts.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .income,
-                category: category,
+                category: nil,  // 初始化时不关联
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
@@ -135,17 +120,17 @@ extension Account {
 
         // 支出账户 - 生活支出
         let livingExpenseAccounts = [
-            ("餐饮", "fork.knife", AssetCategory.living),
-            ("交通", "car.fill", AssetCategory.living),
-            ("购物", "bag.fill", AssetCategory.living),
-            ("娱乐", "gamecontroller.fill", AssetCategory.living),
+            ("餐饮", "fork.knife", "生活支出"),
+            ("交通", "car.fill", "生活支出"),
+            ("购物", "bag.fill", "生活支出"),
+            ("娱乐", "gamecontroller.fill", "生活支出"),
         ]
 
-        for (index, (name, icon, category)) in livingExpenseAccounts.enumerated() {
+        for (index, (name, icon, categoryName)) in livingExpenseAccounts.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .expense,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
@@ -155,15 +140,15 @@ extension Account {
 
         // 支出账户 - 财务支出
         let financeExpenseAccounts = [
-            ("利息", "percent", AssetCategory.finance),
-            ("手续费", "banknote", AssetCategory.finance),
+            ("利息", "percent", "财务支出"),
+            ("手续费", "banknote", "财务支出"),
         ]
 
-        for (index, (name, icon, category)) in financeExpenseAccounts.enumerated() {
+        for (index, (name, icon, categoryName)) in financeExpenseAccounts.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .expense,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
@@ -173,18 +158,18 @@ extension Account {
 
         // 流动资产
         let currentAssets = [
-            ("支付宝", "ant.fill", AssetCategory.current),
-            ("微信", "message.fill", AssetCategory.current),
-            ("现金", "banknote.fill", AssetCategory.current),
-            ("招商银行", "building.columns.fill", AssetCategory.current),
-            ("工商银行", "building.columns.fill", AssetCategory.current),
+            ("支付宝", "ant.fill", "流动资产"),
+            ("微信", "message.fill", "流动资产"),
+            ("现金", "banknote.fill", "流动资产"),
+            ("招商银行", "building.columns.fill", "流动资产"),
+            ("工商银行", "building.columns.fill", "流动资产"),
         ]
 
-        for (index, (name, icon, category)) in currentAssets.enumerated() {
+        for (index, (name, icon, categoryName)) in currentAssets.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .asset,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
@@ -194,17 +179,17 @@ extension Account {
 
         // 固定资产
         let fixedAssets = [
-            ("房产", "house.fill", AssetCategory.fixed),
-            ("车辆", "car.fill", AssetCategory.fixed),
-            ("电子产品", "laptopcomputer", AssetCategory.fixed),
-            ("家具家电", "sofa.fill", AssetCategory.fixed),
+            ("房产", "house.fill", "固定资产"),
+            ("车辆", "car.fill", "固定资产"),
+            ("电子产品", "laptopcomputer", "固定资产"),
+            ("家具家电", "sofa.fill", "固定资产"),
         ]
 
-        for (index, (name, icon, category)) in fixedAssets.enumerated() {
+        for (index, (name, icon, categoryName)) in fixedAssets.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .asset,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
@@ -214,18 +199,18 @@ extension Account {
 
         // 外币账户
         let foreignAccounts = [
-            ("美元账户", "dollarsign.circle", AssetCategory.foreign, "USD"),
-            ("欧元账户", "eurosign.circle", AssetCategory.foreign, "EUR"),
-            ("港币账户", "hkd.sign.circle", AssetCategory.foreign, "HKD"),
-            ("比特币", "bitcoinsign.circle", AssetCategory.foreign, "BTC"),
-            ("以太坊", "eth.circle", AssetCategory.foreign, "ETH"),
+            ("美元账户", "dollarsign.circle", "外币账户", "USD"),
+            ("欧元账户", "eurosign.circle", "外币账户", "EUR"),
+            ("港币账户", "hkd.sign.circle", "外币账户", "HKD"),
+            ("比特币", "bitcoinsign.circle", "外币账户", "BTC"),
+            ("以太坊", "eth.circle", "外币账户", "ETH"),
         ]
 
-        for (index, (name, icon, category, currencyCode)) in foreignAccounts.enumerated() {
+        for (index, (name, icon, categoryName, currencyCode)) in foreignAccounts.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .asset,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 currencyCode: currencyCode,
@@ -236,17 +221,17 @@ extension Account {
 
         // 投资账户
         let investmentAccounts = [
-            ("股票账户", "chart.line.uptrend.xyaxis.circle", AssetCategory.investmentAccount),
-            ("基金账户", "chart.bar.fill", AssetCategory.investmentAccount),
-            ("黄金账户", "circle.lefthalf.filled", AssetCategory.investmentAccount),
-            ("理财产品", "banknote", AssetCategory.investmentAccount),
+            ("股票账户", "chart.line.uptrend.xyaxis.circle", "投资账户"),
+            ("基金账户", "chart.bar.fill", "投资账户"),
+            ("黄金账户", "circle.lefthalf.filled", "投资账户"),
+            ("理财产品", "banknote", "投资账户"),
         ]
 
-        for (index, (name, icon, category)) in investmentAccounts.enumerated() {
+        for (index, (name, icon, categoryName)) in investmentAccounts.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .asset,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
@@ -256,18 +241,18 @@ extension Account {
 
         // 信用负债
         let creditLiabilities = [
-            ("招商信用卡", "creditcard.fill", AssetCategory.credit),
-            ("花呗", "ant.fill", AssetCategory.credit),
-            ("借呗", "hand.draw.fill", AssetCategory.credit),
-            ("房贷", "house.fill", AssetCategory.credit),
-            ("车贷", "car.fill", AssetCategory.credit),
+            ("招商信用卡", "creditcard.fill", "信用负债"),
+            ("花呗", "ant.fill", "信用负债"),
+            ("借呗", "hand.draw.fill", "信用负债"),
+            ("房贷", "house.fill", "信用负债"),
+            ("车贷", "car.fill", "信用负债"),
         ]
 
-        for (index, (name, icon, category)) in creditLiabilities.enumerated() {
+        for (index, (name, icon, categoryName)) in creditLiabilities.enumerated() {
             accounts.append(Account(
                 name: name,
                 type: .liability,
-                category: category,
+                category: nil,
                 balance: 0,
                 initialBalance: 0,
                 icon: icon,
