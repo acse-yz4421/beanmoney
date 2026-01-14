@@ -14,19 +14,12 @@ struct AssetsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var accounts: [Account]
     @State private var selectedTab: AssetTab = .asset
-    @State private var selectedTimeRange: TimeRange = .month
     @State private var titleColorHex: String = AppSettings.shared.titleColorHex
     @State private var showingAddAccount = false
 
     enum AssetTab: String, CaseIterable {
         case asset = "总资产"
         case liability = "总负债"
-    }
-
-    enum TimeRange: String, CaseIterable {
-        case week = "周"
-        case month = "月"
-        case year = "年"
     }
 
     /// 获取今日之前的交易
@@ -125,22 +118,12 @@ struct AssetsView: View {
                         totalLiabilities: totalLiabilities
                     )
 
-                    // 趋势图卡片
-                    AssetTrendChart(
-                        selectedTimeRange: $selectedTimeRange
-                    )
-
-                    // 账户列表切换器
-                    AssetAccountSwitcher(
-                        selectedTab: $selectedTab,
-                        totalAssets: totalAssets,
-                        totalLiabilities: totalLiabilities
-                    )
-
                     // 账户分布环形图
                     AssetDistributionChart(
                         accounts: filteredAccounts,
-                        selectedTab: selectedTab
+                        selectedTab: $selectedTab,
+                        totalAssets: totalAssets,
+                        totalLiabilities: totalLiabilities
                     )
 
                     // 账户列表
@@ -191,6 +174,7 @@ struct AssetOverviewCard: View {
     let totalAssets: Decimal
     let totalLiabilities: Decimal
     @State private var titleColorHex: String = AppSettings.shared.titleColorHex
+    @State private var showingFutureTransactionsSheet = false
 
     /// 未来交易（今天之后的交易）
     private var futureTransactions: [Transaction] {
@@ -279,30 +263,14 @@ struct AssetOverviewCard: View {
     var body: some View {
         VStack(spacing: 16) {
             // 净资产（左对齐，卡片背景色）
-            VStack(alignment: .leading, spacing: 8) {
-                Text("净资产")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("当前净资产")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
                 Text(formatAmount(netWorth))
                     .font(.system(size: 32, weight: .bold))
                     .foregroundColor(.primary)
-
-                if !futureTransactions.isEmpty {
-                    // 净资产变化 = 资产变化 + 负债变化（因为负债变化是负数）
-                    let netWorthChange = estimatedAssetsChange + estimatedLiabilitiesChange
-                    HStack(spacing: 4) {
-                        Text("不包含未来 \(futureTransactions.count) 笔交易")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        if netWorthChange != 0 {
-                            Text(", 未来预估净资产\(netWorthChange > 0 ? "增加" : "减少")\(formatChangeAmount(netWorthChange))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 16)
@@ -321,12 +289,6 @@ struct AssetOverviewCard: View {
                         .font(.headline)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
-
-                    if !futureTransactions.isEmpty && estimatedAssetsChange != 0 {
-                        Text("不包含未来预估\(estimatedAssetsChange > 0 ? "增加" : "减少")\(formatChangeAmount(estimatedAssetsChange))")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -339,20 +301,90 @@ struct AssetOverviewCard: View {
                         .font(.headline)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
-
-                    if !futureTransactions.isEmpty && estimatedLiabilitiesChange != 0 {
-                        Text("不包含未来预估\(estimatedLiabilitiesChange > 0 ? "增加" : "减少")\(formatChangeAmount(estimatedLiabilitiesChange))")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // 分割线
+            if !futureTransactions.isEmpty {
+                Divider()
+                    .padding(.horizontal, 4)
+
+                // 未来交易说明 - 整个区域可点击
+                Button(action: {
+                    showingFutureTransactionsSheet = true
+                }) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 4) {
+                            Text("不包括未来")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("\(futureTransactions.count)")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            Text("笔交易")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        // 资产预估
+                        if estimatedAssetsChange != 0 {
+                            HStack(spacing: 4) {
+                                Text("预估总资产")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(estimatedAssetsChange > 0 ? "增加" : "减少")
+                                    .font(.caption)
+                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
+                                Text(formatChangeAmount(estimatedAssetsChange))
+                                    .font(.caption)
+                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
+                            }
+                        }
+
+                        // 负债预估
+                        if estimatedLiabilitiesChange != 0 {
+                            HStack(spacing: 4) {
+                                Text("预估总负债")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(estimatedLiabilitiesChange > 0 ? "减少" : "增加")
+                                    .font(.caption)
+                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
+                                Text(formatChangeAmount(abs(estimatedLiabilitiesChange)))
+                                    .font(.caption)
+                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 8)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .cornerRadius(8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
         .padding()
         .background(Color(uiColor: .white))
         .cornerRadius(12)
         .shadow(color: Color(uiColor: .black).opacity(0.05), radius: 3, x: 0, y: 1)
+        .sheet(isPresented: $showingFutureTransactionsSheet) {
+            FutureTransactionsView(
+                transactions: futureTransactions,
+                estimatedAssetsChange: estimatedAssetsChange,
+                estimatedLiabilitiesChange: estimatedLiabilitiesChange
+            )
+        }
         .onAppear {
             titleColorHex = AppSettings.shared.titleColorHex
         }
@@ -387,244 +419,6 @@ struct AssetOverviewCard: View {
         formatter.currencySymbol = "¥"
         formatter.maximumFractionDigits = 0
         return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0"
-    }
-}
-
-/// 资产趋势图卡片
-struct AssetTrendChart: View {
-    @Environment(\.modelContext) private var modelContext
-    @Binding var selectedTimeRange: AssetsView.TimeRange
-
-    /// 获取趋势数据
-    private var trendData: [AssetDataPoint] {
-        let calendar = Calendar.current
-        let now = Date()
-
-        // 确定时间范围
-        let (startDate, numberOfPoints, grouping): (Date, Int, Calendar.Component) = switch selectedTimeRange {
-        case .week:
-            (calendar.date(byAdding: .day, value: -7, to: now) ?? now, 7, .day)
-        case .month:
-            (calendar.date(byAdding: .month, value: -1, to: now) ?? now, 4, .weekOfMonth)
-        case .year:
-            (calendar.date(byAdding: .year, value: -1, to: now) ?? now, 12, .month)
-        }
-
-        var dataPoints: [AssetDataPoint] = []
-
-        // 获取所有交易记录
-        let allTransactions = DataManager.shared.getAllTransactions()
-
-        for i in 0..<numberOfPoints {
-            // 计算当前时间点的结束日期
-            let endDate: Date = switch selectedTimeRange {
-            case .week:
-                calendar.date(byAdding: .day, value: -i, to: now) ?? now
-            case .month:
-                calendar.date(byAdding: .weekOfYear, value: -i, to: now) ?? now
-            case .year:
-                calendar.date(byAdding: .month, value: -i, to: now) ?? now
-            }
-
-            // 计算当前时间点的开始日期
-            let startPointDate: Date = switch selectedTimeRange {
-            case .week:
-                calendar.date(byAdding: .day, value: -1, to: endDate) ?? endDate
-            case .month:
-                calendar.date(byAdding: .weekOfYear, value: -1, to: endDate) ?? endDate
-            case .year:
-                calendar.date(byAdding: .month, value: -1, to: endDate) ?? endDate
-            }
-
-            // 计算该时间点的资产
-            let accounts = DataManager.shared.getAllAccounts()
-            var netWorth: Decimal = 0
-            var totalAssets: Decimal = 0
-            var totalLiabilities: Decimal = 0
-
-            for account in accounts {
-                switch account.type {
-                case .asset:
-                    totalAssets += account.balance
-                case .liability:
-                    totalLiabilities += account.balance  // 负债余额现在是负数
-                case .income, .expense:
-                    break
-                }
-            }
-
-            // 净资产 = 总资产 + 总负债（因为负债余额已经是负数了）
-            // 例如：资产10000 + 负债(-2000) = 净资产8000
-            netWorth = totalAssets + totalLiabilities
-
-            // 应用该时间点之前的交易影响
-            let periodTransactions = allTransactions.filter { transaction in
-                transaction.createdAt < endDate && transaction.createdAt >= startPointDate
-            }
-
-            for transaction in periodTransactions {
-                // 这里简化处理，实际应该根据历史状态计算
-                // 由于没有历史快照，我们暂时只显示当前状态
-            }
-
-            let label = formatLabel(endDate)
-            let dataPoint = AssetDataPoint(
-                date: endDate,
-                label: label,
-                netWorth: netWorth,
-                totalAssets: totalAssets,
-                totalLiabilities: totalLiabilities
-            )
-
-            dataPoints.append(dataPoint)
-        }
-
-        return dataPoints.reversed()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 时间范围选择器
-            Picker("时间范围", selection: $selectedTimeRange) {
-                ForEach(AssetsView.TimeRange.allCases, id: \.self) { range in
-                    Text(range.rawValue).tag(range)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            // 趋势图
-            if trendData.isEmpty {
-                // 空状态
-                VStack(spacing: 12) {
-                    Image(systemName: "chart.xyaxis.line")
-                        .font(.system(size: 50))
-                        .foregroundColor(.secondary.opacity(0.5))
-
-                    Text("暂无数据")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
-                .background(Color(uiColor: .secondarySystemGroupedBackground))
-                .cornerRadius(8)
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    // 图例
-                    HStack(spacing: 16) {
-                        LegendItem(color: .blue, label: "净资产")
-                        LegendItem(color: .green, label: "总资产")
-                        LegendItem(color: .red, label: "总负债")
-                        Spacer()
-                    }
-                    .font(.caption)
-                    .padding(.horizontal, 4)
-
-                    // 图表
-                    Chart {
-                        ForEach(trendData, id: \.date) { point in
-                            // 净资产线
-                            LineMark(
-                                x: .value("时间", point.label),
-                                y: .value("净资产", point.netWorth)
-                            )
-                            .foregroundStyle(.blue)
-                            .interpolationMethod(.catmullRom)
-
-                            // 总资产线
-                            LineMark(
-                                x: .value("时间", point.label),
-                                y: .value("总资产", point.totalAssets)
-                            )
-                            .foregroundStyle(.green)
-                            .interpolationMethod(.catmullRom)
-
-                            // 总负债线
-                            LineMark(
-                                x: .value("时间", point.label),
-                                y: .value("总负债", point.totalLiabilities)
-                            )
-                            .foregroundStyle(.red)
-                            .interpolationMethod(.catmullRom)
-                        }
-                    }
-                    .frame(height: 200)
-                    .chartYAxis {
-                        AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
-                            AxisValueLabel {
-                                if let doubleValue = value.as(Double.self) {
-                                    Text(formatAmount(Decimal(doubleValue)))
-                                        .font(.caption2)
-                                }
-                            }
-                            AxisGridLine()
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks(position: .bottom) { _ in
-                            AxisValueLabel()
-                                .font(.caption2)
-                            AxisGridLine()
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
-            }
-        }
-        .padding()
-        .background(Color(uiColor: .white))
-        .cornerRadius(12)
-        .shadow(color: Color(uiColor: .black).opacity(0.05), radius: 3, x: 0, y: 1)
-    }
-
-    private func formatLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        switch selectedTimeRange {
-        case .week:
-            formatter.dateFormat = "E"
-            return formatter.string(from: date)
-        case .month:
-            formatter.dateFormat = "M/d"
-            return formatter.string(from: date)
-        case .year:
-            formatter.dateFormat = "M月"
-            return formatter.string(from: date)
-        }
-    }
-
-    private func formatAmount(_ amount: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "CNY"
-        formatter.currencySymbol = "¥"
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0"
-    }
-}
-
-/// 资产数据点
-struct AssetDataPoint: Identifiable {
-    let id = UUID()
-    let date: Date
-    let label: String
-    let netWorth: Decimal
-    let totalAssets: Decimal
-    let totalLiabilities: Decimal
-}
-
-/// 图例项
-struct LegendItem: View {
-    let color: Color
-    let label: String
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(label)
-                .foregroundColor(.secondary)
-        }
     }
 }
 
@@ -1613,7 +1407,10 @@ struct AccountDetailView: View {
                 Button("取消", role: .cancel) { }
                 Button("删除", role: .destructive) {
                     deleteAccount()
-                    dismiss()
+                    // 延迟一下 dismiss，确保删除完成
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        dismiss()
+                    }
                 }
             } message: {
                 let transactionCount = dataManager.getTransactions(for: account).count
@@ -1680,13 +1477,6 @@ struct AccountDetailView: View {
                             .background(Color.red.opacity(0.3))
                             .clipShape(Circle())
                     }
-                }
-
-                if !account.note.isEmpty {
-                    Text(account.note)
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.8))
-                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
             .padding(.horizontal, 20)
@@ -1781,7 +1571,87 @@ struct AccountDetailView: View {
     }
 
     private func deleteAccount() {
-        dataManager.deleteAccountWithTransactions(account)
+        do {
+            print("准备删除账户: \(account.name), ID: \(account.id)")
+
+            let accountIdToDelete = account.id  // 保存 ID，因为 account 可能在闭包中改变
+
+            // 1. 先删除所有关联的交易（需要回滚余额）
+            let transactions = dataManager.getTransactions(for: account)
+            print("找到 \(transactions.count) 笔关联交易")
+
+            for transaction in transactions {
+                let transactionId = transaction.id
+                let fromAccountId = transaction.fromAccountId
+                let toAccountId = transaction.toAccountId
+
+                // 通过 modelContext 获取交易（确保在同一个 context）
+                let transactionDescriptor = FetchDescriptor<Transaction>(
+                    predicate: #Predicate<Transaction> { $0.id == transactionId }
+                )
+                guard let transactionToDelete = try? modelContext.fetch(transactionDescriptor).first else {
+                    continue
+                }
+
+                // 获取关联账户（使用 modelContext）
+                let fromAccountDescriptor = FetchDescriptor<Account>(
+                    predicate: #Predicate<Account> { $0.id == fromAccountId }
+                )
+                let toAccountDescriptor = FetchDescriptor<Account>(
+                    predicate: #Predicate<Account> { $0.id == toAccountId }
+                )
+
+                if let fromAccount = try? modelContext.fetch(fromAccountDescriptor).first,
+                   let toAccount = try? modelContext.fetch(toAccountDescriptor).first {
+
+                    // 回滚来源账户
+                    rollbackAccountBalance(fromAccount, amount: transaction.amount, isFromAccount: true)
+
+                    // 回滚去向账户
+                    rollbackAccountBalance(toAccount, amount: transaction.amount, isFromAccount: false)
+                }
+
+                // 删除交易
+                modelContext.delete(transactionToDelete)
+            }
+
+            // 2. 通过 ID 获取账户（确保在同一个 context）
+            let accountDescriptor = FetchDescriptor<Account>(
+                predicate: #Predicate<Account> { $0.id == accountIdToDelete }
+            )
+            guard let accountToDelete = try? modelContext.fetch(accountDescriptor).first else {
+                print("找不到要删除的账户")
+                return
+            }
+
+            // 3. 删除账户本身
+            modelContext.delete(accountToDelete)
+
+            // 4. 保存更改
+            try modelContext.save()
+
+            print("账户删除成功，ID: \(accountToDelete.id)")
+        } catch {
+            print("删除账户失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 回滚账户余额
+    private func rollbackAccountBalance(_ account: Account, amount: Decimal, isFromAccount: Bool) {
+        switch account.type {
+        case .asset:
+            if isFromAccount {
+                account.updateBalance(amount)  // 来源账户回滚：增加
+            } else {
+                account.updateBalance(-amount) // 去向账户回滚：减少
+            }
+        case .income:
+            account.updateBalance(-amount)
+        case .expense:
+            account.updateBalance(-amount)
+        case .liability:
+            account.updateBalance(-amount)
+        }
     }
 }
 
@@ -1863,26 +1733,48 @@ struct AccountTransactionRow: View {
 /// 账户分布环形图
 struct AssetDistributionChart: View {
     let accounts: [Account]
-    let selectedTab: AssetsView.AssetTab
+    @Binding var selectedTab: AssetsView.AssetTab
+    let totalAssets: Decimal
+    let totalLiabilities: Decimal
 
     /// 分类数据（包含该分类下的所有账户）
     private var categoryData: [CategoryDistribution] {
-        // 只处理有分类的账户
-        let accountsWithCategories = accounts.filter { $0.category != nil }
+        var result: [CategoryDistribution] = []
 
-        // 按分类分组
+        // 处理有分类的账户
+        let accountsWithCategories = accounts.filter { $0.category != nil }
         let grouped = Dictionary(grouping: accountsWithCategories) { account -> AssetCategory in
             account.category!
         }
 
-        return grouped.map { (category, accountsInCategory) in
+        // 添加已分类的账户
+        for (category, accountsInCategory) in grouped {
             let categoryTotal = accountsInCategory.reduce(0) { $0 + $1.balance }
-            return CategoryDistribution(
+            result.append(CategoryDistribution(
                 category: category,
                 totalAmount: categoryTotal,
                 accounts: accountsInCategory.sorted { $0.balance > $1.balance }
+            ))
+        }
+
+        // 处理未分类的账户
+        let uncategorizedAccounts = accounts.filter { $0.category == nil }
+        if !uncategorizedAccounts.isEmpty {
+            // 创建一个临时的"未分类"分类
+            let uncategorizedCategory = AssetCategory(
+                name: "未分类",
+                accountType: selectedTab == .asset ? .asset : .liability,
+                orderIndex: Int.max
             )
-        }.sorted { $0.totalAmount > $1.totalAmount }
+            let uncategorizedTotal = uncategorizedAccounts.reduce(0) { $0 + $1.balance }
+            result.append(CategoryDistribution(
+                category: uncategorizedCategory,
+                totalAmount: uncategorizedTotal,
+                accounts: uncategorizedAccounts.sorted { $0.balance > $1.balance }
+            ))
+        }
+
+        return result.sorted { $0.totalAmount > $1.totalAmount }
     }
 
     /// 总金额
@@ -1905,15 +1797,56 @@ struct AssetDistributionChart: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // 标题
-            Text("\(selectedTab == .asset ? "资产" : "负债")分布")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
+        VStack(alignment: .leading, spacing: 0) {
+            // 标题 + 切换器
+            HStack {
+                Text("分布")
+                    .font(.headline)
+                    .foregroundColor(.primary)
 
-            if categoryData.isEmpty {
+                Spacer()
+
+                // 简化的切换器
+                HStack(spacing: 4) {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .asset
+                        }
+                    }) {
+                        Text("总资产")
+                            .font(.system(size: 13, weight: selectedTab == .asset ? .semibold : .regular))
+                            .foregroundColor(selectedTab == .asset ? .white : Color(hex: AppSettings.shared.titleColorHex))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(selectedTab == .asset ? Color(hex: AppSettings.shared.titleColorHex) : Color.clear)
+                            .cornerRadius(6)
+                    }
+
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .liability
+                        }
+                    }) {
+                        Text("总负债")
+                            .font(.system(size: 13, weight: selectedTab == .liability ? .semibold : .regular))
+                            .foregroundColor(selectedTab == .liability ? .white : Color(hex: AppSettings.shared.titleColorHex))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(selectedTab == .liability ? Color(hex: AppSettings.shared.titleColorHex) : Color.clear)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            // 分割线
+            Divider()
+                .padding(.horizontal, 16)
+
+            // 内容区域
+            if accounts.isEmpty {
                 // 空状态
                 VStack(spacing: 16) {
                     // 图标
@@ -1935,11 +1868,11 @@ struct AssetDistributionChart: View {
 
                     // 文字说明
                     VStack(spacing: 8) {
-                        Text("暂无\(selectedTab == .asset ? "资产" : "负债")分布")
+                        Text("暂无\(selectedTab == .asset ? "资产" : "负债")账户")
                             .font(.headline)
                             .foregroundColor(.primary)
 
-                        Text(selectedTab == .asset ? "添加资产账户并设置分组后，这里将显示您的资产分布情况" : "添加负债账户并设置分组后，这里将显示您的负债分布情况")
+                        Text(selectedTab == .asset ? "添加资产账户后，这里将显示您的资产分布情况" : "添加负债账户后，这里将显示您的负债分布情况")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
@@ -1954,6 +1887,8 @@ struct AssetDistributionChart: View {
                         .fill(Color(uiColor: .secondarySystemGroupedBackground))
                 )
                 .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
             } else {
                 // 环形图和图例（左右排列）
                 HStack(spacing: 20) {
@@ -2018,7 +1953,8 @@ struct AssetDistributionChart: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                .padding(.top, 20)
+                .padding(.bottom, 20)
             }
         }
         .background(Color(uiColor: .white))
@@ -2069,60 +2005,27 @@ struct CategoryLegendRow: View {
     let overallTotal: Decimal // 总金额用于计算百分比
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             // 色块
             Rectangle()
                 .fill(color)
-                .frame(width: 4, height: 40)
+                .frame(width: 4, height: 24)
                 .cornerRadius(2)
 
-            // 分类信息
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(category.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
+            // 分类名称
+            Text(category.name)
+                .font(.subheadline)
+                .foregroundColor(.primary)
 
-                    Spacer()
+            Spacer()
 
-                    // 金额
-                    Text(formatAmount(categoryAmount))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-
-                    // 百分比
-                    let percentage = overallTotal > 0 ? (categoryAmount / overallTotal * 100) : 0
-                    Text(String(format: "%.1f%%", Double(truncating: percentage as NSNumber)))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                // 账户数量
-                Text("\(accounts.count) 个账户")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
+            // 百分比
+            let percentage = overallTotal > 0 ? (categoryAmount / overallTotal * 100) : 0
+            Text(String(format: "%.1f%%", Double(truncating: percentage as NSNumber)))
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
         }
-    }
-
-    private func formatAmount(_ amount: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "CNY"
-        formatter.currencySymbol = "¥"
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0"
-    }
-
-    private func formatAccountAmount(_ amount: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "CNY"
-        formatter.currencySymbol = "¥"
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0"
     }
 }
 
@@ -2386,4 +2289,201 @@ struct EditCategoryView: View {
 
 #Preview {
     AssetsView()
+}
+
+/// 未来交易列表视图
+struct FutureTransactionsView: View {
+    let transactions: [Transaction]
+    let estimatedAssetsChange: Decimal
+    let estimatedLiabilitiesChange: Decimal
+    @Environment(\.dismiss) private var dismiss
+
+    private var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy年M月d日 EEEE"
+        formatter.locale = Locale(identifier: "zh_CN")
+        return formatter
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                // 预估汇总
+                Section {
+                    VStack(spacing: 12) {
+                        // 资产预估
+                        if estimatedAssetsChange != 0 {
+                            HStack {
+                                Label("预估总资产", systemImage: "chart.line.uptrend.xyaxis")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+
+                                Spacer()
+
+                                Text(estimatedAssetsChange > 0 ? "增加" : "减少")
+                                    .font(.subheadline)
+                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
+
+                                Text(formatChangeAmount(estimatedAssetsChange))
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
+                            }
+                        }
+
+                        // 负债预估
+                        if estimatedLiabilitiesChange != 0 {
+                            HStack {
+                                Label("预估总负债", systemImage: "chart.line.down.xyaxis")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+
+                                Spacer()
+
+                                Text(estimatedLiabilitiesChange > 0 ? "减少" : "增加")
+                                    .font(.subheadline)
+                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
+
+                                Text(formatChangeAmount(abs(estimatedLiabilitiesChange)))
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                // 交易列表
+                Section("交易明细") {
+                    ForEach(transactions) { transaction in
+                        VStack(alignment: .leading, spacing: 6) {
+                            // 日期和备注
+                            HStack {
+                                Text(dateFormatter.string(from: transaction.createdAt))
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+
+                                Spacer()
+
+                                Text(formatAmount(transaction.amount))
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                            }
+
+                            if !transaction.note.isEmpty {
+                                Text(transaction.note)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            // 账户信息
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.left.arrow.right")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+
+                                Text(getAccountName(transaction.fromAccountId))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                Text("→")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                Text(getAccountName(transaction.toAccountId))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+            .navigationTitle("未来交易")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func getAccountName(_ accountId: UUID) -> String {
+        guard let account = DataManager.shared.getAccount(byId: accountId) else {
+            return "未知账户"
+        }
+        return account.name
+    }
+
+    private func formatAmount(_ amount: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "CNY"
+        formatter.currencySymbol = "¥"
+        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0.00"
+    }
+
+    private func formatChangeAmount(_ amount: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "CNY"
+        formatter.currencySymbol = "¥"
+        formatter.maximumFractionDigits = 0
+        let absAmount = abs(amount)
+        let prefix = amount >= 0 ? "+" : ""
+        return prefix + (formatter.string(from: NSDecimalNumber(decimal: absAmount)) ?? "¥0")
+    }
+}
+
+/// 未来交易行
+struct FutureTransactionRow: View {
+    let transaction: Transaction
+    @Environment(\.modelContext) private var modelContext
+
+    private var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // 日期标签
+            VStack(alignment: .leading, spacing: 2) {
+                Text(dateFormatter.string(from: transaction.createdAt))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if !transaction.note.isEmpty {
+                    Text(transaction.note)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // 金额
+            Text(formatAmount(transaction.amount))
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func formatAmount(_ amount: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "CNY"
+        formatter.currencySymbol = "¥"
+        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0.00"
+    }
 }
