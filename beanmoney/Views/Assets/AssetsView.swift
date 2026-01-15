@@ -16,6 +16,7 @@ struct AssetsView: View {
     @State private var selectedTab: AssetTab = .asset
     @State private var titleColorHex: String = AppSettings.shared.titleColorHex
     @State private var showingAddAccount = false
+    @State private var showingCategorySort = false
 
     enum AssetTab: String, CaseIterable {
         case asset = "总资产"
@@ -79,7 +80,7 @@ struct AssetsView: View {
             case .asset:
                 return total + balance
             case .liability:
-                return total - balance
+                return total + balance  // 负债balance本身是负数，直接相加即可
             case .income, .expense:
                 return total
             }
@@ -139,16 +140,28 @@ struct AssetsView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(action: {
-                        showingAddAccount = true
-                    }) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .medium))
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            showingAddAccount = true
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 20, weight: .medium))
+                        }
+
+                        Button(action: {
+                            showingCategorySort = true
+                        }) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 20, weight: .medium))
+                        }
                     }
                 }
             }
             .sheet(isPresented: $showingAddAccount) {
                 UnifiedAddAccountView()
+            }
+            .sheet(isPresented: $showingCategorySort) {
+                CategorySortView()
             }
             .onAppear {
                 titleColorHex = AppSettings.shared.titleColorHex
@@ -189,11 +202,9 @@ struct AssetOverviewCard: View {
 
     /// 预估的净资产变化
     private var estimatedNetWorthChange: Decimal {
-        futureTransactions.reduce(0) { total, transaction in
-            // 简化计算：假设未来交易都会影响净资产
-            // 实际需要根据交易类型详细计算
-            return total
-        }
+        // 净资产 = 总资产 + 总负债（负债为负数）
+        // 预估净资产变化 = 预估总资产变化 + 预估总负债变化
+        estimatedAssetsChange + estimatedLiabilitiesChange
     }
 
     /// 预估的总资产变化
@@ -314,7 +325,8 @@ struct AssetOverviewCard: View {
                 Button(action: {
                     showingFutureTransactionsSheet = true
                 }) {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        // 第一行：不包括未来x笔交易，预估净资产
                         HStack(spacing: 4) {
                             Text("不包括未来")
                                 .font(.caption)
@@ -327,6 +339,17 @@ struct AssetOverviewCard: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
 
+                            // 预估净资产变化
+                            if estimatedNetWorthChange != 0 {
+                                Text("，")
+                                Text("预估净资产")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(formatChangeAmount(estimatedNetWorthChange))
+                                    .font(.caption)
+                                    .foregroundColor(estimatedNetWorthChange > 0 ? .green : .red)
+                            }
+
                             Spacer()
 
                             Image(systemName: "chevron.right")
@@ -334,33 +357,37 @@ struct AssetOverviewCard: View {
                                 .foregroundColor(.secondary)
                         }
 
-                        // 资产预估
-                        if estimatedAssetsChange != 0 {
-                            HStack(spacing: 4) {
-                                Text("预估总资产")
+                        // 第二行：预估总资产、总负债（可换行）
+                        if estimatedAssetsChange != 0 || estimatedLiabilitiesChange != 0 {
+                            WrapLayout(spacing: 4) {
+                                Text("预估")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                Text(estimatedAssetsChange > 0 ? "增加" : "减少")
-                                    .font(.caption)
-                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
-                                Text(formatChangeAmount(estimatedAssetsChange))
-                                    .font(.caption)
-                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
-                            }
-                        }
 
-                        // 负债预估
-                        if estimatedLiabilitiesChange != 0 {
-                            HStack(spacing: 4) {
-                                Text("预估总负债")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text(estimatedLiabilitiesChange > 0 ? "减少" : "增加")
-                                    .font(.caption)
-                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
-                                Text(formatChangeAmount(abs(estimatedLiabilitiesChange)))
-                                    .font(.caption)
-                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
+                                // 资产预估
+                                if estimatedAssetsChange != 0 {
+                                    Text("总资产")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text(formatChangeAmount(estimatedAssetsChange))
+                                        .font(.caption)
+                                        .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
+                                }
+
+                                // 负债预估
+                                if estimatedLiabilitiesChange != 0 {
+                                    if estimatedAssetsChange != 0 {
+                                        Text(",")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Text("总负债")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text(formatChangeAmount(estimatedLiabilitiesChange))
+                                        .font(.caption)
+                                        .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
+                                }
                             }
                         }
                     }
@@ -627,11 +654,17 @@ struct NetWorthCard: View {
     }
 }
 
+/// 账户分组项
+struct AccountGroupItem: Identifiable {
+    let id: UUID
+    let category: AssetCategory?
+    let accounts: [Account]
+}
+
 /// 账户列表
 struct AccountListView: View {
     let accounts: [Account]
     let selectedTab: AssetsView.AssetTab
-    @State private var showingCategorySort = false
     @Query private var categories: [AssetCategory]
 
     /// 按分类分组
@@ -668,13 +701,6 @@ struct AccountListView: View {
         return result
     }
 
-/// 账户分组项
-struct AccountGroupItem: Identifiable {
-    let id: UUID
-    let category: AssetCategory?
-    let accounts: [Account]
-}
-
     var body: some View {
         VStack(spacing: 16) {
             if accounts.isEmpty {
@@ -700,20 +726,6 @@ struct AccountGroupItem: Identifiable {
                         Text(selectedTab == .asset ? "资产账户" : "负债账户")
                             .font(.headline)
                             .foregroundColor(.primary)
-
-                        Spacer()
-
-                        // 分组排序按钮
-                        Button(action: {
-                            showingCategorySort = true
-                        }) {
-                            Image(systemName: "line.3.horizontal")
-                                .font(.system(size: 18, weight: .medium))
-                                .foregroundColor(.blue)
-                                .frame(width: 36, height: 36)
-                                .background(Color.blue.opacity(0.1))
-                                .clipShape(Circle())
-                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 16)
@@ -744,11 +756,6 @@ struct AccountGroupItem: Identifiable {
                 .cornerRadius(12)
                 .shadow(color: Color(uiColor: .black).opacity(0.05), radius: 3, x: 0, y: 1)
             }
-        }
-        .sheet(isPresented: $showingCategorySort) {
-            CategorySortView(
-                accountType: selectedTab == .asset ? .asset : .liability
-            )
         }
     }
 }
@@ -1445,6 +1452,10 @@ struct AccountDetailView: View {
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(.white)
 
+                    Text("初始金额: \(account.formattedInitialBalance)")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.7))
+
                     Text("余额: \(account.formattedBalance)")
                         .font(.system(size: 16))
                         .foregroundColor(.white.opacity(0.9))
@@ -2034,8 +2045,6 @@ struct CategorySortView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    let accountType: AccountType
-
     @Query private var categories: [AssetCategory]
     @Query private var accounts: [Account]
 
@@ -2044,9 +2053,13 @@ struct CategorySortView: View {
     @State private var categoryToDelete: AssetCategory?
     @State private var showingDeleteAlert = false
 
-    var filteredCategories: [AssetCategory] {
-        categories.filter { $0.accountType == accountType }
-            .sorted { $0.orderIndex < $1.orderIndex }
+    /// 按账户类型分组
+    var categoriesByType: [(AccountType, [AssetCategory])] {
+        AccountType.allCases.map { type in
+            let typeCategories = categories.filter { $0.accountType == type }
+                .sorted { $0.orderIndex < $1.orderIndex }
+            return (type, typeCategories)
+        }
     }
 
     var body: some View {
@@ -2058,47 +2071,50 @@ struct CategorySortView: View {
                         .foregroundColor(.secondary)
                 }
 
-                Section {
-                    ForEach(filteredCategories) { category in
-                        HStack {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundColor(.secondary)
-                                .frame(width: 20)
+                // 为每种账户类型显示一个 Section
+                ForEach(categoriesByType, id: \.0) { (accountType, typeCategories) in
+                    Section(header: Text(accountType.description)) {
+                        ForEach(typeCategories) { category in
+                            HStack {
+                                Image(systemName: "line.3.horizontal")
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 20)
 
-                            Text(category.name)
-                                .font(.subheadline)
+                                Text(category.name)
+                                    .font(.subheadline)
 
-                            Spacer()
+                                Spacer()
 
-                            Text("\(getAccountCount(for: category))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                Text("\(getAccountCount(for: category))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                editingCategory = category
+                            }
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            editingCategory = category
+                        .onDelete { indexSet in
+                            if let index = indexSet.first {
+                                categoryToDelete = typeCategories[index]
+                                showingDeleteAlert = true
+                            }
                         }
-                    }
-                    .onDelete { indexSet in
-                        if let index = indexSet.first {
-                            categoryToDelete = filteredCategories[index]
-                            showingDeleteAlert = true
-                        }
-                    }
-                    .onMove { source, destination in
-                        withAnimation {
-                            var reordered = filteredCategories
-                            reordered.move(fromOffsets: source, toOffset: destination)
-                            updateOrderIndices(reordered)
+                        .onMove { source, destination in
+                            withAnimation {
+                                var reordered = typeCategories
+                                reordered.move(fromOffsets: source, toOffset: destination)
+                                updateOrderIndices(reordered)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("分组排序")
+            .navigationTitle("分组管理")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button("返回") {
                         dismiss()
                     }
                 }
@@ -2112,7 +2128,7 @@ struct CategorySortView: View {
                 }
             }
             .sheet(isPresented: $showingAddCategory) {
-                AddCategoryView(accountType: accountType)
+                AddCategoryView()
             }
             .sheet(item: $editingCategory) { category in
                 EditCategoryView(category: category)
@@ -2131,8 +2147,10 @@ struct CategorySortView: View {
                 }
             }
             .onDisappear {
-                // 保存排序顺序
-                AppSettings.shared.saveCategoryOrder(filteredCategories)
+                // 保存所有类型的排序顺序
+                for (_, typeCategories) in categoriesByType {
+                    AppSettings.shared.saveCategoryOrder(typeCategories)
+                }
             }
         }
     }
@@ -2171,8 +2189,7 @@ struct AddCategoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    let accountType: AccountType
-
+    @State private var selectedAccountType: AccountType = .asset
     @State private var categoryName = ""
     @State private var isSaving = false
 
@@ -2180,6 +2197,17 @@ struct AddCategoryView: View {
         NavigationStack {
             Form {
                 Section("分组信息") {
+                    Picker("账户类型", selection: $selectedAccountType) {
+                        ForEach(AccountType.allCases, id: \.self) { type in
+                            HStack {
+                                Image(systemName: type.icon)
+                                Text(type.description)
+                            }
+                            .tag(type)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
                     TextField("分组名称", text: $categoryName)
                         .autocapitalization(.none)
                 }
@@ -2210,12 +2238,12 @@ struct AddCategoryView: View {
             // 获取当前类型的最大 orderIndex
             let descriptor = FetchDescriptor<AssetCategory>()
             let existingCategories = try modelContext.fetch(descriptor)
-            let typeCategories = existingCategories.filter { $0.accountType == accountType }
+            let typeCategories = existingCategories.filter { $0.accountType == selectedAccountType }
             let maxOrderIndex = typeCategories.map { $0.orderIndex }.max() ?? -1
 
             let category = AssetCategory(
                 name: categoryName,
-                accountType: accountType,
+                accountType: selectedAccountType,
                 orderIndex: maxOrderIndex + 1
             )
 
@@ -2310,48 +2338,39 @@ struct FutureTransactionsView: View {
             List {
                 // 预估汇总
                 Section {
-                    VStack(spacing: 12) {
+                    HStack(spacing: 4) {
                         // 资产预估
                         if estimatedAssetsChange != 0 {
-                            HStack {
-                                Label("预估总资产", systemImage: "chart.line.uptrend.xyaxis")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                            Label("总资产", systemImage: "chart.line.uptrend.xyaxis")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
 
-                                Spacer()
-
-                                Text(estimatedAssetsChange > 0 ? "增加" : "减少")
-                                    .font(.subheadline)
-                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
-
-                                Text(formatChangeAmount(estimatedAssetsChange))
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
-                            }
+                            Text(formatChangeAmount(estimatedAssetsChange))
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(estimatedAssetsChange > 0 ? .green : .red)
                         }
 
                         // 负债预估
                         if estimatedLiabilitiesChange != 0 {
-                            HStack {
-                                Label("预估总负债", systemImage: "chart.line.down.xyaxis")
+                            if estimatedAssetsChange != 0 {
+                                Text("，")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
-
-                                Spacer()
-
-                                Text(estimatedLiabilitiesChange > 0 ? "减少" : "增加")
-                                    .font(.subheadline)
-                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
-
-                                Text(formatChangeAmount(abs(estimatedLiabilitiesChange)))
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
                             }
+
+                            Label("总负债", systemImage: "chart.line.down.xyaxis")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+
+                            Text(formatChangeAmount(estimatedLiabilitiesChange))
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(estimatedLiabilitiesChange > 0 ? .green : .red)
                         }
+
+                        Spacer()
                     }
-                    .padding(.vertical, 8)
                 }
 
                 // 交易列表
@@ -2438,6 +2457,15 @@ struct FutureTransactionsView: View {
         let prefix = amount >= 0 ? "+" : ""
         return prefix + (formatter.string(from: NSDecimalNumber(decimal: absAmount)) ?? "¥0")
     }
+
+    private func formatEstimatedAmount(_ amount: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "CNY"
+        formatter.currencySymbol = "¥"
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0"
+    }
 }
 
 /// 未来交易行
@@ -2485,5 +2513,59 @@ struct FutureTransactionRow: View {
         formatter.currencyCode = "CNY"
         formatter.currencySymbol = "¥"
         return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "¥0.00"
+    }
+}
+
+/// 自动换行布局
+struct WrapLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = FlowResult(
+            in: proposal.replacingUnspecifiedDimensions().width,
+            subviews: subviews,
+            spacing: spacing
+        )
+        return result.size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = FlowResult(
+            in: bounds.width,
+            subviews: subviews,
+            spacing: spacing
+        )
+        for (index, subview) in subviews.enumerated() {
+            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x, y: bounds.minY + result.positions[index].y), proposal: .unspecified)
+        }
+    }
+
+    struct FlowResult {
+        var size: CGSize
+        var positions: [CGPoint]
+
+        init(in maxWidth: CGFloat, subviews: Subviews, spacing: CGFloat) {
+            var positions: [CGPoint] = []
+            var currentX: CGFloat = 0
+            var currentY: CGFloat = 0
+            var lineHeight: CGFloat = 0
+
+            for subview in subviews {
+                let size = subview.sizeThatFits(.unspecified)
+
+                if currentX + size.width > maxWidth && currentX > 0 {
+                    currentX = 0
+                    currentY += lineHeight + spacing
+                    lineHeight = 0
+                }
+
+                positions.append(CGPoint(x: currentX, y: currentY))
+                currentX += size.width + spacing
+                lineHeight = max(lineHeight, size.height)
+            }
+
+            self.size = CGSize(width: maxWidth, height: currentY + lineHeight)
+            self.positions = positions
+        }
     }
 }
