@@ -1256,13 +1256,13 @@ struct AccountCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            // 图标（圆角方形）
+            // 图标（圆形）
             Image(systemName: account.icon)
                 .font(.system(size: 22, weight: .medium))
                 .foregroundColor(.white)
                 .frame(width: 42, height: 42)
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
+                    Circle()
                         .fill(Color.blue)
                 )
 
